@@ -134,3 +134,8 @@ Since routing uses `BrowserRouter` (real paths, not `#hash`), make sure your hos
 ## Legacy files
 
 `server/index.mjs` was an earlier local Node+JSON-file backend used before this project connected to Supabase. It is no longer imported or used by the frontend â€” everything now goes through `src/lib/supabase.js`. It's left in the repo for reference but can be deleted along with the `server` npm script.
+
+
+## Changelog
+- 2026-08-30 19.35.41 — glassmorphism redesign applied
+
