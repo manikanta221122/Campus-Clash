@@ -196,46 +196,131 @@ using (
   )
 );
 
--- Safe public schedule endpoint. It returns only non-sensitive match fields.
--- The underlying matches table is not publicly selectable.
-drop function if exists public.get_public_matches();
-
-create or replace function public.get_public_matches()
-returns table (
-  id uuid,
-  tournament_id uuid,
-  round text,
-  match_number integer,
+-- Public schedule projection. Room credentials never enter this table.
+drop table if exists public.match_public;
+create table public.match_public (
+  id uuid primary key references public.matches(id) on delete cascade,
+  tournament_id uuid not null references public.tournaments(id) on delete cascade,
+  round text not null,
+  match_number integer not null,
   team_a_id uuid,
   team_b_id uuid,
   team_a_label text,
   team_b_label text,
   score_a integer,
   score_b integer,
-  kills_a integer,
-  kills_b integer,
+  kills_a integer not null default 0,
+  kills_b integer not null default 0,
   winner_team_id uuid,
-  status text,
-  scheduled_at timestamptz
-)
-language sql
-stable
+  status text not null,
+  scheduled_at timestamptz not null
+);
+
+alter table public.match_public enable row level security;
+create policy "public can view safe match schedule"
+on public.match_public for select to anon, authenticated using (true);
+revoke insert, update, delete on public.match_public from anon, authenticated;
+grant select on public.match_public to anon, authenticated;
+
+create or replace function public.sync_match_public()
+returns trigger
+language plpgsql
 security definer
 set search_path = ''
 as $$
-  select
-    m.id, m.tournament_id, m.round, m.match_number,
-    m.team_a_id, m.team_b_id, m.team_a_label, m.team_b_label,
-    m.score_a, m.score_b, m.kills_a, m.kills_b,
-    m.winner_team_id, m.status, m.scheduled_at
-  from public.matches m
-  join public.tournaments t on t.id = m.tournament_id
-  where t.status <> 'draft'
-  order by m.scheduled_at asc;
+declare v_status text;
+begin
+  if tg_op = 'DELETE' then
+    delete from public.match_public where id = old.id;
+    return old;
+  end if;
+
+  select t.status into v_status from public.tournaments t where t.id = new.tournament_id;
+  if v_status <> 'draft' then
+    insert into public.match_public (
+      id,tournament_id,round,match_number,team_a_id,team_b_id,
+      team_a_label,team_b_label,score_a,score_b,kills_a,kills_b,
+      winner_team_id,status,scheduled_at
+    )
+    values (
+      new.id,new.tournament_id,new.round,new.match_number,new.team_a_id,new.team_b_id,
+      new.team_a_label,new.team_b_label,new.score_a,new.score_b,new.kills_a,new.kills_b,
+      new.winner_team_id,new.status,new.scheduled_at
+    )
+    on conflict (id) do update set
+      tournament_id=excluded.tournament_id, round=excluded.round,
+      match_number=excluded.match_number, team_a_id=excluded.team_a_id,
+      team_b_id=excluded.team_b_id, team_a_label=excluded.team_a_label,
+      team_b_label=excluded.team_b_label, score_a=excluded.score_a,
+      score_b=excluded.score_b, kills_a=excluded.kills_a,
+      kills_b=excluded.kills_b, winner_team_id=excluded.winner_team_id,
+      status=excluded.status, scheduled_at=excluded.scheduled_at;
+  else
+    delete from public.match_public where id = new.id;
+  end if;
+  return new;
+end;
 $$;
 
-revoke all on function public.get_public_matches() from public, anon, authenticated;
-grant execute on function public.get_public_matches() to anon, authenticated;
+create or replace function public.sync_tournament_match_public()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if new.status = 'draft' then
+    delete from public.match_public where tournament_id = new.id;
+  else
+    insert into public.match_public (
+      id,tournament_id,round,match_number,team_a_id,team_b_id,
+      team_a_label,team_b_label,score_a,score_b,kills_a,kills_b,
+      winner_team_id,status,scheduled_at
+    )
+    select
+      m.id,m.tournament_id,m.round,m.match_number,m.team_a_id,m.team_b_id,
+      m.team_a_label,m.team_b_label,m.score_a,m.score_b,m.kills_a,m.kills_b,
+      m.winner_team_id,m.status,m.scheduled_at
+    from public.matches m
+    where m.tournament_id = new.id
+    on conflict (id) do update set
+      round=excluded.round, match_number=excluded.match_number,
+      team_a_id=excluded.team_a_id, team_b_id=excluded.team_b_id,
+      team_a_label=excluded.team_a_label, team_b_label=excluded.team_b_label,
+      score_a=excluded.score_a, score_b=excluded.score_b,
+      kills_a=excluded.kills_a, kills_b=excluded.kills_b,
+      winner_team_id=excluded.winner_team_id, status=excluded.status,
+      scheduled_at=excluded.scheduled_at;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists matches_sync_public on public.matches;
+create trigger matches_sync_public
+after insert or update or delete on public.matches
+for each row execute function public.sync_match_public();
+
+drop trigger if exists tournaments_sync_public_matches on public.tournaments;
+create trigger tournaments_sync_public_matches
+after update of status on public.tournaments
+for each row execute function public.sync_tournament_match_public();
+
+insert into public.match_public (
+  id,tournament_id,round,match_number,team_a_id,team_b_id,
+  team_a_label,team_b_label,score_a,score_b,kills_a,kills_b,
+  winner_team_id,status,scheduled_at
+)
+select
+  m.id,m.tournament_id,m.round,m.match_number,m.team_a_id,m.team_b_id,
+  m.team_a_label,m.team_b_label,m.score_a,m.score_b,m.kills_a,m.kills_b,
+  m.winner_team_id,m.status,m.scheduled_at
+from public.matches m
+join public.tournaments t on t.id = m.tournament_id
+where t.status <> 'draft';
+
+revoke execute on function public.sync_match_public() from public, anon, authenticated;
+revoke execute on function public.sync_tournament_match_public() from public, anon, authenticated;
 
 -- Trigger-only functions are not public RPC endpoints.
 revoke execute on function public.prevent_self_role_escalation() from public, anon, authenticated;
