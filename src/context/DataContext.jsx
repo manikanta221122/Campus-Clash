@@ -183,7 +183,7 @@ export function DataProvider({ children }) {
 
   const refreshMatches = useCallback(async () => {
     const [{ data, error }, { data: roomRows, error: roomError }] = await Promise.all([
-      supabase.rpc("get_public_matches"),
+      supabase.from("match_public").select("*").order("scheduled_at", { ascending: true }),
       user
         ? supabase.from("match_rooms").select("match_id, room_id, room_password")
         : Promise.resolve({ data: [], error: null }),
