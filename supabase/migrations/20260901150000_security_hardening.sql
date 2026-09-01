@@ -184,6 +184,9 @@ alter table public.matches drop column if exists room_password;
 drop policy if exists "public can view matches" on public.matches;
 drop policy if exists "players can view their matches" on public.matches;
 
+revoke select on public.matches from anon;
+grant select on public.matches to authenticated;
+
 create policy "players can view their matches"
 on public.matches for select
 to authenticated
