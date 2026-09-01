@@ -182,10 +182,21 @@ export function DataProvider({ children }) {
   }, []);
 
   const refreshMatches = useCallback(async () => {
-    const { data, error } = await supabase.from("matches").select("*").order("scheduled_at", { ascending: true });
+    const [{ data, error }, { data: roomRows, error: roomError }] = await Promise.all([
+      supabase.from("match_public").select("*").order("scheduled_at", { ascending: true }),
+      user
+        ? supabase.from("match_rooms").select("match_id, room_id, room_password")
+        : Promise.resolve({ data: [], error: null }),
+    ]);
     if (error) { console.error(error.message); return; }
-    setMatchesRaw(data || []);
-  }, []);
+    if (roomError) console.error(roomError.message);
+    const rooms = Object.fromEntries((roomRows || []).map((r) => [r.match_id, r]));
+    setMatchesRaw((data || []).map((row) => ({
+      ...row,
+      room_id: rooms[row.id]?.room_id ?? null,
+      room_password: rooms[row.id]?.room_password ?? null,
+    })));
+  }, [user]);
 
   const refreshPayments = useCallback(async () => {
     const [{ data: payRows, error }, { data: regRows }] = await Promise.all([
@@ -406,8 +417,6 @@ export function DataProvider({ children }) {
         team_a_label: data.teamAId ? null : data.teamALabel.trim(),
         team_b_label: data.teamBId ? null : data.teamBLabel.trim(),
         scheduled_at: new Date(data.scheduledAt).toISOString(),
-        room_id: data.roomId?.trim() || null,
-        room_password: data.roomPassword?.trim() || null,
         status: "upcoming",
         created_by: user.id,
       })
@@ -415,6 +424,16 @@ export function DataProvider({ children }) {
       .single();
     if (error) {
       throw new Error(error.message.includes("duplicate") ? "That round already has a match with this number for this tournament." : error.message);
+    }
+
+    if (data.roomId?.trim() || data.roomPassword?.trim()) {
+      const { error: roomError } = await supabase.from("match_rooms").upsert({
+        match_id: row.id,
+        room_id: data.roomId?.trim() || null,
+        room_password: data.roomPassword?.trim() || null,
+        updated_by: user.id,
+      });
+      if (roomError) throw new Error(roomError.message);
     }
 
     await refreshMatches();
@@ -459,6 +478,22 @@ export function DataProvider({ children }) {
       })
       .eq("id", matchId);
     if (error) throw new Error(error.message);
+
+    const roomId = patch.roomId === undefined ? current.room_id : patch.roomId.trim() || null;
+    const roomPassword = patch.roomPassword === undefined ? current.room_password : patch.roomPassword.trim() || null;
+    if (roomId || roomPassword) {
+      const { error: roomError } = await supabase.from("match_rooms").upsert({
+        match_id: matchId,
+        room_id: roomId,
+        room_password: roomPassword,
+        updated_by: user.id,
+        updated_at: new Date().toISOString(),
+      });
+      if (roomError) throw new Error(roomError.message);
+    } else {
+      const { error: roomError } = await supabase.from("match_rooms").delete().eq("match_id", matchId);
+      if (roomError) throw new Error(roomError.message);
+    }
 
     await refreshMatches();
   };
