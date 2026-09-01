@@ -470,10 +470,6 @@ export function DataProvider({ children }) {
         kills_b: patch.killsB === "" || patch.killsB === undefined ? current.kills_b : Number(patch.killsB),
         status,
         winner_team_id: winnerTeamId,
-        // Announcing the room: admin fills these in whenever they're ready
-        // (usually right before the match starts). Blank clears it.
-        room_id: patch.roomId === undefined ? current.room_id : patch.roomId.trim() || null,
-        room_password: patch.roomPassword === undefined ? current.room_password : patch.roomPassword.trim() || null,
         updated_at: new Date().toISOString(),
       })
       .eq("id", matchId);
