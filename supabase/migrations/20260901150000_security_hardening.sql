@@ -39,7 +39,7 @@ declare
   v_max_teams integer;
   v_team_size integer;
   v_main_players integer;
-  v_confirmed integer;
+  v_reserved integer;
 begin
   select t.entry_fee, t.status, t.registration_deadline, t.max_teams, t.team_size
     into v_entry_fee, v_tournament_status, v_deadline, v_max_teams, v_team_size
@@ -78,11 +78,12 @@ begin
       raise exception 'Team roster must contain exactly % main players for this tournament.', v_team_size;
     end if;
 
-    select count(*) into v_confirmed
+    select count(*) into v_reserved
     from public.registrations r
-    where r.tournament_id = new.tournament_id and r.status = 'confirmed';
+    where r.tournament_id = new.tournament_id
+      and r.status in ('payment_pending','confirmed');
 
-    if v_confirmed >= v_max_teams then raise exception 'This tournament is full.'; end if;
+    if v_reserved >= v_max_teams then raise exception 'This tournament is full.'; end if;
 
     if v_entry_fee > 0 then new.status := 'payment_pending';
     else new.status := 'confirmed';
