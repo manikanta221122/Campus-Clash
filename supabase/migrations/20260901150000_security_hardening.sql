@@ -195,21 +195,46 @@ using (
   )
 );
 
--- Safe public schedule projection. It intentionally contains no room
--- credentials or creator metadata.
-drop view if exists public.match_public;
-create view public.match_public as
-select
-  m.id, m.tournament_id, m.round, m.match_number,
-  m.team_a_id, m.team_b_id, m.team_a_label, m.team_b_label,
-  m.score_a, m.score_b, m.kills_a, m.kills_b,
-  m.winner_team_id, m.status, m.scheduled_at
-from public.matches m
-join public.tournaments t on t.id = m.tournament_id
-where t.status <> 'draft';
+-- Safe public schedule endpoint. It returns only non-sensitive match fields.
+-- The underlying matches table is not publicly selectable.
+drop function if exists public.get_public_matches();
 
-revoke all on public.match_public from public;
-grant select on public.match_public to anon, authenticated;
+create or replace function public.get_public_matches()
+returns table (
+  id uuid,
+  tournament_id uuid,
+  round text,
+  match_number integer,
+  team_a_id uuid,
+  team_b_id uuid,
+  team_a_label text,
+  team_b_label text,
+  score_a integer,
+  score_b integer,
+  kills_a integer,
+  kills_b integer,
+  winner_team_id uuid,
+  status text,
+  scheduled_at timestamptz
+)
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select
+    m.id, m.tournament_id, m.round, m.match_number,
+    m.team_a_id, m.team_b_id, m.team_a_label, m.team_b_label,
+    m.score_a, m.score_b, m.kills_a, m.kills_b,
+    m.winner_team_id, m.status, m.scheduled_at
+  from public.matches m
+  join public.tournaments t on t.id = m.tournament_id
+  where t.status <> 'draft'
+  order by m.scheduled_at asc;
+$$;
+
+revoke all on function public.get_public_matches() from public, anon, authenticated;
+grant execute on function public.get_public_matches() to anon, authenticated;
 
 -- Trigger-only functions are not public RPC endpoints.
 revoke execute on function public.prevent_self_role_escalation() from public, anon, authenticated;
